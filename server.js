@@ -4,7 +4,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-const rooms = {}; // code -> { host: {queue:[]}, guest: {queue:[]}, guestJoined: bool }
+const rooms = {}; // code -> { host, guest, guestJoined, levelId, lastSeen }
 
 function makeCode() {
     let code;
@@ -20,6 +20,7 @@ app.post('/createRoom', (req, res) => {
         host: { queue: [] },
         guest: { queue: [] },
         guestJoined: false,
+        levelId: req.body.levelId || null,
         lastSeen: Date.now()
     };
     res.json({ code });
@@ -32,7 +33,7 @@ app.post('/joinRoom', (req, res) => {
     if (room.guestJoined) return res.json({ ok: false, error: 'roomFull' });
     room.guestJoined = true;
     room.host.queue.push({ type: 'guestJoined' });
-    res.json({ ok: true });
+    res.json({ ok: true, levelId: room.levelId });
 });
 
 app.post('/send', (req, res) => {
@@ -56,7 +57,6 @@ app.get('/poll', (req, res) => {
     res.json({ ok: true, messages });
 });
 
-// clean up rooms nobody's touched in 30 min
 setInterval(() => {
     const cutoff = Date.now() - 30 * 60 * 1000;
     for (const code in rooms) {

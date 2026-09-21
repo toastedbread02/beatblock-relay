@@ -1,9 +1,10 @@
-const WebSocket = require('ws');
+const express = require('express');
+const app = express();
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ port: PORT });
 
-const rooms = {}; // roomCode -> { host: ws, guest: ws }
+const rooms = {}; // code -> { host: {queue:[]}, guest: {queue:[]}, guestJoined: bool }
 
 function makeCode() {
     let code;
@@ -13,51 +14,54 @@ function makeCode() {
     return code;
 }
 
-wss.on('connection', (ws) => {
-    ws.on('message', (raw) => {
-        let msg;
-        try { msg = JSON.parse(raw); } catch (e) { return; }
-
-        if (msg.type === 'createRoom') {
-            const code = makeCode();
-            rooms[code] = { host: ws, guest: null };
-            ws.roomCode = code;
-            ws.role = 'host';
-            ws.send(JSON.stringify({ type: 'roomCreated', code }));
-        }
-
-        else if (msg.type === 'joinRoom') {
-            const room = rooms[msg.code];
-            if (!room) {
-                ws.send(JSON.stringify({ type: 'joinFailed', reason: 'noSuchRoom' }));
-                return;
-            }
-            if (room.guest) {
-                ws.send(JSON.stringify({ type: 'joinFailed', reason: 'roomFull' }));
-                return;
-            }
-            room.guest = ws;
-            ws.roomCode = msg.code;
-            ws.role = 'guest';
-            ws.send(JSON.stringify({ type: 'joined', code: msg.code }));
-            room.host.send(JSON.stringify({ type: 'guestJoined' }));
-        }
-
-        else if (msg.type === 'relay') {
-            const room = rooms[ws.roomCode];
-            if (!room) return;
-            const other = ws.role === 'host' ? room.guest : room.host;
-            if (other) other.send(JSON.stringify({ type: 'relay', data: msg.data }));
-        }
-    });
-
-    ws.on('close', () => {
-        const room = rooms[ws.roomCode];
-        if (!room) return;
-        const other = ws.role === 'host' ? room.guest : room.host;
-        if (other) other.send(JSON.stringify({ type: 'peerLeft' }));
-        delete rooms[ws.roomCode];
-    });
+app.post('/createRoom', (req, res) => {
+    const code = makeCode();
+    rooms[code] = {
+        host: { queue: [] },
+        guest: { queue: [] },
+        guestJoined: false,
+        lastSeen: Date.now()
+    };
+    res.json({ code });
 });
 
-console.log('Relay running on port ' + PORT);
+app.post('/joinRoom', (req, res) => {
+    const { code } = req.body;
+    const room = rooms[code];
+    if (!room) return res.json({ ok: false, error: 'noSuchRoom' });
+    if (room.guestJoined) return res.json({ ok: false, error: 'roomFull' });
+    room.guestJoined = true;
+    room.host.queue.push({ type: 'guestJoined' });
+    res.json({ ok: true });
+});
+
+app.post('/send', (req, res) => {
+    const { code, role, data } = req.body;
+    const room = rooms[code];
+    if (!room) return res.json({ ok: false, error: 'noSuchRoom' });
+    const target = role === 'host' ? room.guest : room.host;
+    target.queue.push({ type: 'relay', data });
+    room.lastSeen = Date.now();
+    res.json({ ok: true });
+});
+
+app.get('/poll', (req, res) => {
+    const { code, role } = req.query;
+    const room = rooms[code];
+    if (!room) return res.json({ ok: false, error: 'noSuchRoom' });
+    const self = role === 'host' ? room.host : room.guest;
+    const messages = self.queue;
+    self.queue = [];
+    room.lastSeen = Date.now();
+    res.json({ ok: true, messages });
+});
+
+// clean up rooms nobody's touched in 30 min
+setInterval(() => {
+    const cutoff = Date.now() - 30 * 60 * 1000;
+    for (const code in rooms) {
+        if (rooms[code].lastSeen < cutoff) delete rooms[code];
+    }
+}, 5 * 60 * 1000);
+
+app.listen(PORT, () => console.log('Relay running on port ' + PORT));

@@ -1,7 +1,14 @@
 {
   "name": "beatblock-relay",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "private": true,
+  "description": "In-memory room and custom-level relay for Beatblock Multiplayer",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^4.19.2" }
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }

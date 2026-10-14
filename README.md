@@ -28,6 +28,8 @@ This repository includes `render.yaml` for creating a Render web service in Fran
 
 For local testing, both players on one computer can use `http://127.0.0.1:8787`. On a LAN, use the relay computer's LAN address.
 
+The room creator is the host. The host's Song Select choice is relayed to the room; selecting a custom level starts its upload, and guests can download it before starting locally.
+
 ## Network and data notes
 
 Plain public HTTP exposes room codes, player state, and transferred levels to network observers. Do not expose it publicly if you need confidentiality. HTTPS requires the native LuaSec runtime dependency on each client platform.

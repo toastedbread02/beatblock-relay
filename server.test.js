@@ -72,6 +72,25 @@ test("rejects malformed state and prevents room identity spoofing or cross-room 
   assert.deepEqual(isolated.body.players, []);
 });
 
+test("room host publishes its selected level and guests cannot replace it", async () => {
+  const host = await post("/rooms", { protocol: 2, name: "host" });
+  const guest = await post(`/rooms/${host.body.code}/join`, { protocol: 2, name: "guest" });
+  const selectedLevel = { levelId: "levels/song-a/", variant: "Expert" };
+  const selected = await post(`/rooms/${host.body.code}/sync`, {
+    protocol: 2, playerId: host.body.playerId, state: null, selectedLevel,
+  });
+  assert.deepEqual(selected.body.selectedLevel, selectedLevel);
+  const spoof = await post(`/rooms/${host.body.code}/sync`, {
+    protocol: 2, playerId: guest.body.playerId, state: null,
+    selectedLevel: { levelId: "levels/other/", variant: "" },
+  });
+  assert.equal(spoof.status, 403);
+  const guestSync = await post(`/rooms/${host.body.code}/sync`, {
+    protocol: 2, playerId: guest.body.playerId, state: null,
+  });
+  assert.deepEqual(guestSync.body.selectedLevel, selectedLevel);
+});
+
 test("rejects stale snapshots and removes a player after explicit leave", async () => {
   const created = await post("/rooms", { protocol: 2, name: "host" });
   const state = { seq: 5, x: 10, y: 20, angle: 359, alive: true, paddles: [], gameState: "playing" };

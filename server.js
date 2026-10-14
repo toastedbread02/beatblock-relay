@@ -119,6 +119,11 @@ function validState(value) {
   }
   if (value.levelId !== null && value.levelId !== undefined && (typeof value.levelId !== "string" || value.levelId.length > 256)) return false;
   if (value.gameState !== undefined && !["loading", "waiting", "playing", "finished"].includes(value.gameState)) return false;
+  if (value.selectedLevel !== undefined && value.selectedLevel !== null) {
+    if (typeof value.selectedLevel !== "object" || Array.isArray(value.selectedLevel)
+      || typeof value.selectedLevel.levelId !== "string" || value.selectedLevel.levelId.length > 256
+      || typeof value.selectedLevel.variant !== "string" || value.selectedLevel.variant.length > 128) return false;
+  }
   if (value.progress !== null && value.progress !== undefined) {
     if (typeof value.progress !== "object" || !finite(value.progress.beat, -1_000_000, 1_000_000)) return false;
     if (value.progress.total !== null && value.progress.total !== undefined && !finite(value.progress.total, -1_000_000, 1_000_000)) return false;
@@ -145,11 +150,17 @@ function getMember(room, playerId) {
 
 function cleanup(now = Date.now()) {
   for (const [code, room] of rooms) {
+    let hostExpired = false;
     for (const [id, player] of room.players) {
       if (now - player.updatedAt > PLAYER_TIMEOUT_MS) {
         room.players.delete(id);
+        if (room.hostId === id) hostExpired = true;
         for (const [levelId, level] of room.levels) if (level.ownerId === id && !level.complete) room.levels.delete(levelId);
       }
+    }
+    if (hostExpired) {
+      room.hostId = room.players.keys().next().value ?? null;
+      room.selectedLevel = null;
     }
     if (room.players.size === 0) rooms.delete(code);
   }
@@ -168,10 +179,11 @@ function createServer() {
         const body = await readJson(req);
         if (body.protocol !== PROTOCOL) return send(res, 426, { ok: false, error: "protocolMismatch" });
         const code = makeCode();
-        const room = { code, createdAt: Date.now(), players: new Map(), levels: new Map() };
+        const room = { code, createdAt: Date.now(), players: new Map(), levels: new Map(), hostId: null, selectedLevel: null };
         const player = makePlayer(room, body.name, body.levelId);
+        room.hostId = player.playerId;
         rooms.set(code, room);
-        return send(res, 201, { ok: true, protocol: PROTOCOL, code, playerId: player.playerId, levelId: player.levelId, players: memberList(room) });
+        return send(res, 201, { ok: true, protocol: PROTOCOL, code, playerId: player.playerId, hostId: room.hostId, selectedLevel: room.selectedLevel, levelId: player.levelId, players: memberList(room) });
       }
 
       const match = url.pathname.match(/^\/rooms\/([2-9]{6})\/(join|sync|leave|levels\/(?:list|begin|chunk|finish|read))$/);
@@ -184,7 +196,7 @@ function createServer() {
         if (!room) return send(res, 404, { ok: false, error: "roomNotFound" });
         if (room.players.size >= MAX_PLAYERS) return send(res, 409, { ok: false, error: "roomFull" });
         const player = makePlayer(room, body.name, null);
-        return send(res, 200, { ok: true, protocol: PROTOCOL, playerId: player.playerId, levelId: [...room.players.values()][0]?.levelId ?? null, players: memberList(room), levels: transferList(room) });
+        return send(res, 200, { ok: true, protocol: PROTOCOL, playerId: player.playerId, hostId: room.hostId, selectedLevel: room.selectedLevel, levelId: [...room.players.values()][0]?.levelId ?? null, players: memberList(room), levels: transferList(room) });
       }
       if (!room) return send(res, 404, { ok: false, error: "roomNotFound" });
       if (action.startsWith("levels/")) {
@@ -247,12 +259,26 @@ function createServer() {
       if (!player) return send(res, 403, { ok: false, error: "invalidSession" });
       if (action === "leave") {
         room.players.delete(player.playerId);
+        if (room.hostId === player.playerId) {
+          room.hostId = room.players.keys().next().value ?? null;
+          room.selectedLevel = null;
+        }
         for (const [levelId, level] of room.levels) if (level.ownerId === player.playerId && !level.complete) room.levels.delete(levelId);
         if (room.players.size === 0) rooms.delete(code);
         return send(res, 200, { ok: true });
       }
       if (!validState(body.state)) return send(res, 400, { ok: false, error: "invalidState" });
       if (body.state && body.state.seq <= player.lastSeq) return send(res, 409, { ok: false, error: "staleState" });
+      if (body.selectedLevel !== undefined) {
+        const selected = body.selectedLevel;
+        if (player.playerId !== room.hostId) return send(res, 403, { ok: false, error: "hostOnly" });
+        if (selected !== null && (!selected || typeof selected !== "object" || Array.isArray(selected)
+          || typeof selected.levelId !== "string" || selected.levelId.length > 256
+          || typeof selected.variant !== "string" || selected.variant.length > 128)) {
+          return send(res, 400, { ok: false, error: "invalidLevelSelection" });
+        }
+        room.selectedLevel = selected;
+      }
       if (body.state) {
         player.lastSeq = body.state.seq;
         player.state = body.state;
@@ -264,6 +290,8 @@ function createServer() {
         protocol: PROTOCOL,
         serverTime: Date.now(),
         levelId: [...room.players.values()][0]?.levelId ?? null,
+        hostId: room.hostId,
+        selectedLevel: room.selectedLevel,
         members: memberList(room),
           levels: transferList(room),
         players: [...room.players.values()].filter((other) => other.playerId !== player.playerId && other.state).map((other) => ({

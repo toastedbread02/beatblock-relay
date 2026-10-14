@@ -18,21 +18,18 @@ curl http://127.0.0.1:8787/health
 
 Expected response: `{"ok":true,"protocol":2,"rooms":0}`. Run the relay checks with `npm test`.
 
-## Connect two computers
+## Public deployment (no VPN)
 
-The host computer must keep the relay running while you play. For a long-distance connection, the recommended setup is a private VPN such as Tailscale or WireGuard:
+Players can connect directly over the internet; they do not need a VPN. Deploy this repository once to an always-on public host, then configure both clients with its URL. A VM with a public IPv4 address can run `npm start` after allowing inbound TCP port 8787. Set both mods' `config.json` `serverUrl` to `http://<public-ip>:8787`.
 
-1. Install the VPN on the relay host and both players’ computers, and connect them to the same private network.
-2. Start this relay on the host.
-3. In each Beatblock mod’s `config.json`, set `serverUrl` to the relay host’s VPN address, for example `http://100.80.12.34:8787`.
-4. Restart Beatblock on both computers, create a room on one, and join its room code on the other.
+This is plain HTTP and does not encrypt room codes, gameplay state, names, or transferred level files. Use only on a trusted route. The Beatblock runtime currently inspected for the mod has LuaSocket but no bundled LuaSec. Render enforces HTTPS for public web services, so its public URL requires the mod's LuaSec HTTPS support and native LuaSec/OpenSSL modules to be packaged for the target game platforms. The client can attempt verified HTTPS when `ssl.https` is installed; it reports an error when the module is missing.
 
-The mod config is in Beatblock’s `Mods/beatblock-multiplayer/` folder. On the computer hosting the relay, `127.0.0.1` also works for that computer’s game, but the remote friend must use the host’s VPN address.
+This repository includes `render.yaml` for creating a Render web service in Frankfurt. Render also has US regions; choose a region reasonably close to the players. Its in-memory rooms and levels disappear when the process restarts, and its free service may sleep when idle. No public relay is deployed by this repository.
 
-A cloud VM can be used instead: install Node.js there, copy this `server/` directory, run `npm start`, allow inbound TCP port 8787 in its firewall, and set both clients’ `serverUrl` to `http://<vm-public-ip>:8787`.
+For local testing, both players on one computer can use `http://127.0.0.1:8787`. On a LAN, use the relay computer's LAN address.
 
 ## Network and data notes
 
-This Beatblock runtime has LuaSocket but no LuaSec, so the mod cannot use HTTPS. Plain public HTTP exposes room codes, player state, and transferred levels to network observers. Use the VPN option for an encrypted route. Do not port-forward a home relay directly to the public internet unless you accept that limitation.
+Plain public HTTP exposes room codes, player state, and transferred levels to network observers. Do not expose it publicly if you need confidentiality. HTTPS requires the native LuaSec runtime dependency on each client platform.
 
 Rooms and levels are held in memory and disappear when the relay stops or a room empties. A room supports eight players and up to 32 MB of shared custom level data; one level can contain up to 199 files. Inactive players expire after 20 seconds. The relay does not save uploaded levels to disk.

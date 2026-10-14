@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: beatblock-relay
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
